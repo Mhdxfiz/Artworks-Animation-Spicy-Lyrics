@@ -1,4 +1,5 @@
-# 🎨 Animated Artworks for Spicy Lyrics
+# 🎨 Animated Artworks 
+     for Spicy Lyrics
 
 A Spicetify extension that brings your album artwork to life with smooth animations.
 
