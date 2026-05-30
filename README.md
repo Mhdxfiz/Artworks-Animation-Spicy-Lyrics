@@ -61,6 +61,7 @@ node animart-proxy.js
 ```
 
 ---
+WORKING IN SPICY LYRICS✨🔥
 
 ## ✅ You're all set!
 
