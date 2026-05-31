@@ -59,7 +59,7 @@ Once ffmpeg is installed, start the proxy:
 ```powershell
 node animart-proxy.js
 ```
-
+⚠️DO NOT CLOSE POWERSHELL IF YOU WANT ANIMATED ARTWORKS TO RUN
 ---
 WORKING IN SPICY LYRICS✨🔥
 
