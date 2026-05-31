@@ -4,7 +4,14 @@ A Spicetify extension that brings your album artwork to life with smooth animati
 
 ---
 
-https://github.com/user-attachments/assets/7a0475dd-3c29-4c2b-99cb-8413c89243f2
+
+https://github.com/user-attachments/assets/c942f09d-d64a-4689-ad85-403b492950da
+
+
+
+
+
+
 
 
 
