@@ -1,36 +1,3 @@
-// ============================================================
-//  animart-proxy.js  —  Local Transcode Proxy Server v5
-//  Run: node animart-proxy.js [resolusi]
-//
-//  Resolution options:
-//    node animart-proxy.js 360      → force 360p
-//    node animart-proxy.js 480      → force 480p (default)
-//    node animart-proxy.js 720      → force 720p
-//    node animart-proxy.js 1080     → force 1080p
-//    node animart-proxy.js best     → select best quality
-//    node animart-proxy.js          → show interactive menu
-//
-//  How it works:
-//    Extension → GET http://localhost:7799/artwork?artist=&album=&title=
-//    Proxy      → search in PARALLEL across 3 APIs simultaneously:
-//                   API-1: artwork.m8tec.top
-//                   API-2: iTunes Search + Apple Music AMP API
-//                   API-3: iTunes Search + Apple Music web scraping
-//                 → Whoever returns m3u8 first wins.
-//                 → Others are ignored (no sequential fallback).
-//    Proxy      → return JSON { m3u8: "..." } or { m3u8: null }
-//
-//    Extension → GET http://localhost:7799/transcode?url=<m3u8>
-//    Proxy      → check WebM cache first (skip download if already cached)
-//    Proxy      → fetch .ts segments, ffmpeg transcode H.264 → VP8 WebM
-//    Proxy      → save to WebM cache, stream to Extension
-//
-//  Requirement: Node.js + ffmpeg in PATH
-//  Install ffmpeg: winget install ffmpeg  (Windows)
-//                  brew install ffmpeg    (Mac)
-//                  sudo apt install ffmpeg (Linux)
-// ============================================================
-
 const http   = require("http");
 const https  = require("https");
 const { spawn } = require("child_process");
