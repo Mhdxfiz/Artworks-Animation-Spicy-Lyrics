@@ -1,0 +1,14 @@
+{
+  "name": "Animated Artworks for Spicy Lyrics",
+  "description": "Brings your album artwork to life with smooth animations. Requires animart-proxy (Node.js + ffmpeg) running locally.",
+  "preview": "preview.gif",
+  "main": "animated-artwork.mjs",
+  "readme": "README.md",
+  "authors": [
+    {
+      "name": "JustHfizz",
+      "url": "https://github.com/JustHfizz"
+    }
+  ],
+  "tags": ["animation", "artwork", "lyrics", "SpicyLyrics"]
+}
