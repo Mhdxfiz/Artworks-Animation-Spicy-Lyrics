@@ -1,12 +1,9 @@
 // ============================================================
-//  animated-artwork.mjs  —  Spicetify Extension v2.1
-//  - requestVideoFrameCallback: frame-perfect sync
-//  - rAF 60fps fallback with visibility guard
-//  - Re-inject on fullscreen transitions (canvas container swap fix)
-//  - Broader fullscreen selectors for Spicy Lyrics
+//  animated-artwork.mjs  —  Spicetify Extension v2
+//  Requires: animart-proxy v2 running at localhost:7799
 // ============================================================
 
-(async function AnimatedArtworkV2.1() {
+(async function AnimatedArtworkV2() {
 
   while (!Spicetify?.Player?.addEventListener || !Spicetify?.Player?.data) {
     await new Promise(r => setTimeout(r, 200));
@@ -63,28 +60,23 @@
       this.ctx    = null;
     }
 
-    // Canvas must exist in the DOM AND still be a child of the same container.
-    // Fullscreen swaps the container element — canvas orphans or gets removed entirely.
-    // We track this.canvas.parentElement at mount time; if it changes, treat as inactive.
     isActive() {
       if (!this.isPlaying || !this.video || this.video.paused) return false;
       const canvas = document.getElementById(`${this.id}-canvas`);
-      if (!canvas) return false;
-      // Verify canvas is still inside a live container (not detached from DOM)
-      return document.body.contains(canvas);
+      return !!canvas && document.body.contains(canvas);
     }
 
     _mount(container) {
       document.getElementById(`${this.id}-video`)?.remove();
       document.getElementById(`${this.id}-canvas`)?.remove();
 
-      const video       = document.createElement("video");
-      video.id          = `${this.id}-video`;
-      video.muted       = true;
-      video.loop        = true;
-      video.playsInline = true;
-      video.autoplay    = true;
-      video.preload     = "auto";
+      const video         = document.createElement("video");
+      video.id            = `${this.id}-video`;
+      video.muted         = true;
+      video.loop          = true;
+      video.playsInline   = true;
+      video.autoplay      = true;
+      video.preload       = "auto";
       video.style.cssText = "position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;left:-9999px;top:-9999px;";
       document.body.appendChild(video);
 
@@ -106,7 +98,6 @@
       const v = this.video;
 
       if (typeof v.requestVideoFrameCallback === "function") {
-        L(`${this.id}: using requestVideoFrameCallback`);
         const onFrame = (now, meta) => {
           if (!this.running) return;
           const { videoWidth: w, videoHeight: h } = v;
@@ -117,18 +108,18 @@
           try { this.ctx.drawImage(v, 0, 0, w, h); } catch (_) { return; }
           if (this.canvas.style.opacity !== "1") {
             this.canvas.style.opacity = "1";
-            L(`${this.id}: ✓ visible (${w}×${h}) @ ${meta?.presentedFrames || "?"} frames`);
+            L(`${this.id}: ✓ visible (${w}×${h})`);
           }
           this._rvfcId = v.requestVideoFrameCallback(onFrame);
         };
-        this._rvfcId  = v.requestVideoFrameCallback(onFrame);
+        this._rvfcId     = v.requestVideoFrameCallback(onFrame);
         this._stopMirror = () => {
           if (this._rvfcId) { v.cancelVideoFrameCallback(this._rvfcId); this._rvfcId = null; }
         };
         return;
       }
 
-      L(`${this.id}: using rAF 60fps fallback`);
+      // rAF fallback — skip draw when tab is hidden to avoid burst on refocus
       const draw = () => {
         if (!this.running) return;
         this.raf = requestAnimationFrame(draw);
@@ -144,7 +135,7 @@
           L(`${this.id}: ✓ visible (${w}×${h})`);
         }
       };
-      this.raf = requestAnimationFrame(draw);
+      this.raf         = requestAnimationFrame(draw);
       this._stopMirror = () => { if (this.raf) { cancelAnimationFrame(this.raf); this.raf = null; } };
     }
 
@@ -152,7 +143,6 @@
       this.destroy();
       this._mount(container);
       this.isInjecting = true;
-      L(`${this.id}: requesting transcode...`);
       try {
         const resp = await fetch(`${PROXY_BASE}/transcode?url=${encodeURIComponent(m3u8Url)}`);
         if (!resp.ok) {
@@ -160,6 +150,7 @@
           this.isInjecting = false;
           return false;
         }
+
         const reader = resp.body.getReader();
         const chunks = [];
         let totalBytes = 0;
@@ -197,7 +188,6 @@
     }
   }
 
-  // ── Globals ────────────────────────────────────────────────
   let currentUri = null;
   let lastM3u8   = null;
   let proxyOk    = false;
@@ -206,47 +196,35 @@
 
   async function fetchM3u8(artist, album, title) {
     const params = new URLSearchParams({ artist: artist || "", album: album || "", title: title || "" });
-    L(`Fetch: "${title}" — ${artist}`);
     try {
       const resp = await fetch(`${PROXY_BASE}/artwork?${params}`, { signal: AbortSignal.timeout(15000) });
-      if (!resp.ok) { E(`Proxy /artwork error: ${resp.status}`); return null; }
+      if (!resp.ok) { E(`/artwork error: ${resp.status}`); return null; }
       const json = await resp.json();
-      if (json.m3u8) { L("✓ m3u8 found"); return json.m3u8; }
-      L("No animated artwork for this track");
-      return null;
-    } catch (e) { E("fetchM3u8 error:", e.message); return null; }
+      return json.m3u8 || null;
+    } catch (e) { E("fetchM3u8:", e.message); return null; }
   }
 
-  // ── DOM finders ────────────────────────────────────────────
   const findNpv = () =>
     document.querySelector(".MediaImageContainer") ||
     document.querySelector("[data-testid='cover-art-image']")?.closest("[data-testid='cover-art']") ||
     document.querySelector("[data-testid='now-playing-widget'] [data-testid='cover-art']") ||
     document.querySelector(".main-coverSlotExpanded-container") || null;
 
-  // findSL covers normal + fullscreen layouts of Spicy Lyrics.
-  // In fullscreen, Spicetify moves the lyrics page into a different mount point;
-  // the cover art element may be at a different depth or have a different class.
   const findSL = () => {
-    // All known Spicy Lyrics root selectors (normal + fullscreen variants)
     const root =
       document.querySelector("#SpicyLyricsPage") ||
       document.querySelector(".spicylyrics-page") ||
       document.querySelector("[class*='SpicyLyrics']") ||
       document.querySelector("[data-spicylyrics]") ||
-      // Fullscreen: Spicetify wraps lyrics in a fullscreen overlay container
       document.querySelector(".Root__fullscreen-page [class*='SpicyLyrics']") ||
       document.querySelector(".Root__fullscreen-page #SpicyLyricsPage") ||
       document.querySelector("[class*='fullscreen'] [class*='SpicyLyrics']") ||
       document.querySelector("[class*='fullscreen'] #SpicyLyricsPage");
-
     if (!root) return null;
-
     return (
       root.querySelector(".MediaImageContainer") ||
       root.querySelector("[data-testid='cover-art']") ||
       root.querySelector("[data-testid='cover-art-image']")?.closest("[data-testid='cover-art']") ||
-      // Fallback: first img-containing element that looks like artwork
       root.querySelector(".cover-art") ||
       root.querySelector("[class*='CoverArt']") ||
       root
@@ -256,7 +234,6 @@
   async function tryInject(player, finder, label, m3u8, tries = 20) {
     if (player.isInjecting) return false;
     if (player.isActive())  return true;
-
     player.isInjecting = true;
     try {
       for (let i = 0; i < tries; i++) {
@@ -275,7 +252,6 @@
     return false;
   }
 
-  // ── Song change ────────────────────────────────────────────
   async function onSongChange() {
     const track = Spicetify.Player.data?.item;
     if (!track) return;
@@ -291,26 +267,21 @@
     playerNPV.destroy();
     playerSL.destroy();
     lastM3u8 = null;
-
     if (!artist && !title) return;
 
     proxyOk = await isProxyAlive();
-    if (!proxyOk) { E("⚠ Proxy not running! Start with: node animart-proxy.js"); return; }
+    if (!proxyOk) { E("Proxy not running! Start with: node animart-proxy.js"); return; }
 
     const m3u8 = await fetchM3u8(artist, album, title);
-    if (!m3u8) { L("No animation for this track"); return; }
+    if (!m3u8) { L("No animated artwork for this track"); return; }
     lastM3u8 = m3u8;
 
     tryInject(playerNPV, findNpv, "Now Bar",      m3u8);
     tryInject(playerSL,  findSL,  "Spicy Lyrics", m3u8);
   }
 
-  // ── MutationObserver ───────────────────────────────────────
-  // Debounce reduced to 300ms for snappier fullscreen re-inject.
-  // On fullscreen entry/exit Spotify rapidly removes+adds large DOM subtrees;
-  // we wait for the DOM to settle then immediately re-check both players.
-  let observerTimer   = null;
-  let lastFullscreen  = !!document.fullscreenElement;
+  let observerTimer  = null;
+  let lastFullscreen = !!document.fullscreenElement;
 
   function scheduleReInject(delay = 300) {
     clearTimeout(observerTimer);
@@ -323,33 +294,28 @@
     }, delay);
   }
 
-  // Listen for fullscreen change explicitly — this fires when entering/exiting
-  // fullscreen even if MutationObserver misses it (e.g. CSS-only transitions).
+  // Native fullscreen API
   document.addEventListener("fullscreenchange", () => {
     const isFs = !!document.fullscreenElement;
     if (isFs !== lastFullscreen) {
       lastFullscreen = isFs;
-      L(`Fullscreen ${isFs ? "entered" : "exited"} — re-injecting...`);
-      // Destroy current players so play() re-mounts into the new container
+      L(`Fullscreen ${isFs ? "entered" : "exited"} — re-injecting`);
       playerNPV.destroy();
       playerSL.destroy();
       scheduleReInject(400);
     }
   });
 
-  // Also handle Spicetify's own fullscreen toggle (uses a CSS class, not the
-  // native Fullscreen API, so fullscreenchange may not fire).
-  // Watch for class changes on <html> or <body> that indicate fullscreen mode.
+  // Spicetify CSS-based fullscreen (no native fullscreen API event)
   const fsObserver = new MutationObserver(() => {
     const isFs =
       document.documentElement.classList.contains("fullscreen") ||
       document.body.classList.contains("fullscreen") ||
       !!document.querySelector(".Root__fullscreen-page") ||
       !!document.querySelector("[class*='fullscreen-mode']");
-
     if (isFs !== lastFullscreen) {
       lastFullscreen = isFs;
-      L(`Spicetify fullscreen ${isFs ? "entered" : "exited"} — re-injecting...`);
+      L(`Spicetify fullscreen ${isFs ? "entered" : "exited"} — re-injecting`);
       playerNPV.destroy();
       playerSL.destroy();
       scheduleReInject(400);
@@ -358,32 +324,29 @@
   fsObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
   fsObserver.observe(document.body,            { attributes: true, attributeFilter: ["class"] });
 
+  // General DOM observer — re-inject if canvas gets removed
   const observer = new MutationObserver((mutations) => {
     if (!lastM3u8 || !proxyOk) return;
-
     const relevant = mutations.some(m => {
       for (const node of m.addedNodes)   { if (node.dataset?.animart) return false; }
       for (const node of m.removedNodes) {
         if (node.id === "animart-npv-canvas" || node.id === "animart-sl-canvas") return true;
       }
-      const target = m.target;
-      if (target?.dataset?.animart || target?.id?.startsWith("animart-")) return false;
+      const t = m.target;
+      if (t?.dataset?.animart || t?.id?.startsWith("animart-")) return false;
       return true;
     });
-
     if (relevant) scheduleReInject(300);
   });
-
   observer.observe(document.body, { childList: true, subtree: true });
 
-  // ── Init ──────────────────────────────────────────────────
-  L("Extension v2.1 — fullscreen fix + rVFC + 60fps fallback + VP9");
+  L("v2 — fullscreen fix + rVFC + rAF fallback + VP9");
   proxyOk = await isProxyAlive();
   if (proxyOk) L("✓ Proxy running at localhost:7799");
-  else { E("⚠ Proxy not running!"); E("  Start with: node animart-proxy.js"); }
+  else { E("Proxy not running!"); E("Start with: node animart-proxy.js"); }
 
   Spicetify.Player.addEventListener("songchange", onSongChange);
   await onSongChange();
-  L("Extension ready ✓");
+  L("Ready ✓");
 
 })();
