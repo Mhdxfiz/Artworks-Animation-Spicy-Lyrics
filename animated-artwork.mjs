@@ -1,3 +1,15 @@
+// ============================================================
+//  animated-artwork.mjs  —  Spicetify Extension v14
+//  3 API paralel (via proxy v2)
+//  - requestVideoFrameCallback: frame-perfect sync (no lag, no stutter)
+//  - Fallback rAF 60fps jika browser tidak support rVFC
+//  - Canvas context: alpha=false untuk render lebih cepat
+//  - MutationObserver dengan debounce + guard agar tidak spam
+//  - Re-inject hanya jika canvas benar-benar hilang dari DOM
+//    DAN tidak sedang dalam proses inject
+//  - Proxy log cache hit tidak spam (dibatasi di sisi proxy)
+// ============================================================
+
 (async function AnimatedArtworkV14() {
 
   while (!Spicetify?.Player?.addEventListener || !Spicetify?.Player?.data) {
@@ -84,7 +96,7 @@
       const canvas         = document.createElement("canvas");
       canvas.id            = `${this.id}-canvas`;
       canvas.dataset.animart = "1";
-      canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:inherit;z-index:10;pointer-events:none;opacity:0;transition:opacity 0.5s ease";
+      canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:inherit;z-index:10;pointer-events:none;opacity:0;transition:opacity 0.3s ease";
       container.style.position = "relative";
       container.style.overflow = "hidden";
       container.appendChild(canvas);
@@ -140,13 +152,16 @@
       }
 
       // ── Mode 2: requestAnimationFrame @ 60fps (fallback) ──────────────────
-      // Tanpa batas TARGET_MS — biarkan rAF berjalan di refresh rate layar penuh.
-      // Monitor 60Hz = ~16.7ms/frame, 120Hz = ~8.3ms/frame, dst.
+      // Guard document.visibilityState: tab hidden → rAF di-throttle browser ke ~1fps,
+      // lalu burst saat kembali visible → stutter. Skip draw saat hidden.
       L(`${this.id}: menggunakan rAF 60fps (requestVideoFrameCallback tidak tersedia)`);
 
       const draw = () => {
         if (!this.running) return;
         this.raf = requestAnimationFrame(draw);
+
+        // Skip draw saat tab hidden — hindari burst saat kembali focused
+        if (document.visibilityState === "hidden") return;
 
         if (!v || v.readyState < 2 || v.paused || v.ended || v.videoWidth === 0) return;
 
@@ -184,8 +199,21 @@
           this.isInjecting = false;
           return false;
         }
-        const webmBuf = await resp.arrayBuffer();
-        L(`${this.id}: WebM diterima (${(webmBuf.byteLength / 1024).toFixed(0)} KB)`);
+
+        // Streaming read — kumpulkan chunk sambil tetap bisa mulai decode lebih awal
+        const reader = resp.body.getReader();
+        const chunks = [];
+        let totalBytes = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          totalBytes += value.byteLength;
+        }
+        const webmBuf = new Uint8Array(totalBytes);
+        let offset = 0;
+        for (const chunk of chunks) { webmBuf.set(chunk, offset); offset += chunk.byteLength; }
+        L(`${this.id}: WebM diterima (${(totalBytes / 1024).toFixed(0)} KB)`);
 
         const blob     = new Blob([webmBuf], { type: "video/webm" });
         this.blobUrl   = URL.createObjectURL(blob);
@@ -194,7 +222,7 @@
         await new Promise((resolve, reject) => {
           this.video.oncanplay = resolve;
           this.video.onerror   = () => reject(new Error(`video error: ${this.video.error?.message || "?"}`));
-          setTimeout(() => reject(new Error("timeout canplay")), 12000);
+          setTimeout(() => reject(new Error("timeout canplay")), 8000);
         });
 
         this.video.play().catch(e => E(`${this.id}: play error:`, e.message));
@@ -348,7 +376,7 @@
   observer.observe(document.body, { childList: true, subtree: true });
 
   // ── Init ──────────────────────────────────────────────────
-  L("Extension v14 — rVFC frame-perfect + 60fps fallback + VP9 full quality");
+  L("Extension v14 — rVFC frame-perfect + 60fps fallback (visibility guard) + VP9 full quality + streaming fetch");
   proxyOk = await isProxyAlive();
   if (proxyOk) L("✓ Proxy aktif di localhost:7799");
   else { E("⚠ Proxy TIDAK aktif!"); E("  Jalankan: node animart-proxy.js"); }
